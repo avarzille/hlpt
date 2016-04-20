@@ -1,0 +1,93 @@
+diff --git a/include/mach/gnumach.defs b/include/mach/gnumach.defs
+index ad6aa88..6e71961 100644
+--- a/include/mach/gnumach.defs
++++ b/include/mach/gnumach.defs
+@@ -85,6 +85,15 @@ routine register_new_task_notification(
+ 		host_priv	: host_priv_t;
+ 		notification	: mach_port_send_t);
+ 
++simpleroutine thread_terminate_release2(
++		thread		: thread_t;
++		task		: task_t;
++		thread_name	: mach_port_name_t;
++		reply_port	: mach_port_name_t;
++		address		: vm_address_t;
++		size		: vm_size_t;
++		death_event : vm_offset_t);
++
+ /* Test that the contents of ADDR are equal to the 32-bit integer VAL1.
+  * If they are not, return immediately, otherwise, block until a
+  * matching 'gsync_wake' is done on the same address. FLAGS is used
+diff --git a/kern/thread.c b/kern/thread.c
+index 3e90079..ef000bc 100644
+--- a/kern/thread.c
++++ b/kern/thread.c
+@@ -43,6 +43,7 @@
+ #include <kern/counters.h>
+ #include <kern/debug.h>
+ #include <kern/eventcount.h>
++#include <kern/gsync.h>
+ #include <kern/ipc_mig.h>
+ #include <kern/ipc_tt.h>
+ #include <kern/processor.h>
+@@ -847,13 +848,14 @@ kern_return_t thread_terminate(
+ 	return KERN_SUCCESS;
+ }
+ 
+-kern_return_t thread_terminate_release(
++kern_return_t thread_terminate_release2(
+ 	thread_t thread,
+ 	task_t task,
+ 	mach_port_t thread_name,
+ 	mach_port_t reply_port,
+ 	vm_offset_t address,
+-	vm_size_t size)
++	vm_size_t size,
++	vm_offset_t death_event)
+ {
+ 	if (task == NULL)
+ 		return KERN_INVALID_ARGUMENT;
+@@ -866,7 +868,23 @@ kern_return_t thread_terminate_release(
+ 	if ((address != 0) || (size != 0))
+ 		vm_deallocate(task->map, address, size);
+ 
+-	return thread_terminate(thread);
++	kern_return_t ret = thread_terminate (thread);
++	if (death_event != 0)
++		gsync_wake (task, death_event, 0, GSYNC_MUTATE);
++
++	return (ret);
++}
++
++kern_return_t thread_terminate_release(
++	thread_t thread,
++	task_t task,
++	mach_port_t thread_name,
++	mach_port_t reply_port,
++	vm_offset_t address,
++	vm_size_t size)
++{
++	return (thread_terminate_release2 (thread,
++	  task, thread_name, reply_port, address, size, 0));
+ }
+ 
+ /*
+diff --git a/kern/thread.h b/kern/thread.h
+index 7106fd2..b04bd75 100644
+--- a/kern/thread.h
++++ b/kern/thread.h
+@@ -285,6 +285,14 @@ extern kern_return_t	thread_terminate_release(
+ 	mach_port_t	reply_port,
+ 	vm_offset_t	address,
+ 	vm_size_t	size);
++extern kern_return_t	thread_terminate_release2(
++	thread_t	thread,
++	task_t		task,
++	mach_port_t	thread_name,
++	mach_port_t	reply_port,
++	vm_offset_t	address,
++	vm_size_t	size,
++	vm_offset_t death_event);
+ extern kern_return_t	thread_suspend(
+ 	thread_t	thread);
+ extern kern_return_t	thread_resume(

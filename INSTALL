@@ -1,0 +1,27 @@
+Before doing *anything*, I recommend you back things up.
+
+Anyway, this isn't intended as a fully fledged library. It's mostly a POC
+to show a new implementation for libpthread. I decided to name it HLPT, or
+Hurdish Libpthread, because I'm terrible at naming things (I'm also behind
+'gsync', which is the building block for this lib, so this should come as
+no surprise).
+
+The lib currently has no configure script. By default, it will install the
+header files to /usr/local/include and the shared object to /usr/local/lib.
+If you wish to change this, you'll have to modify the makefile.
+
+Note that typing 'make' isn't enough. You need to make some modifications to
+GNU Mach. In particular, you need the latest patches that implement the gsync
+module. You'll also need to apply the patch located in 'ttr2.diff'. This is
+necessary to correctly implement thread joining. So, you'll have to download
+the kernel sources, apply the patch, install that kernel, and *then* will you
+be able to compile the lib.
+
+In order to facilitate things, there are 2 header files that implement the
+routines that make use of the new kernel features. This is so that rebuilding
+and installing a new glibc is not necessary.
+
+Once you have the patched kernel, you can compile and install the lib. It's as
+easy as typing 'make' and then 'make install'. You can also uninstall it with
+(what else) 'make uninstall'. I plan on providing a test suite shortly.
+

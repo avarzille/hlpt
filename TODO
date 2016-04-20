@@ -1,0 +1,61 @@
+This list is incomplete. I'm just adding stuff as I remember.
+
+[ HLPT ]
+
+- What should we do when the ID counter overflows? If the running threads are
+  sorted in the list, we can still generate unique ID's even after overflow
+  occurs, but this slows down most programs (slightly so).
+  
+- Should we use the old pthread keys implementation? That one uses libihash
+  and can offer an unbounded number of keys, although it's a bit slower and
+  uses a bit more memory than the fixed-size table we have right now.
+  
+- NPTL uses a stack cache to speed up thread creation. Should we follow suit?
+  In a similar vein, NPTL lazily loads libgcc when it needs forced stack
+  unwinding. I don't think that's a good idea, since it's not *that* unusual
+  to call either 'pthread_cancel' or 'pthread_exit', but it could be done.
+
+- Cancellation points shouldn't switch to async mode and just leave it at
+  that. We need a separate flag that signals that a thread is executing one
+  of those functions. Then, if such a thread gets cancelled, we retrieve its
+  register set, and test its SP and PC against the internal symbols:
+  '_hurd_intr_rpc_msg_cx_sp' and '_hurd_intr_rpc_msg_sp_restored'. This solves
+  the bug as described in: sourceware.org/bugzilla/show_bug.cgi?id=12683
+  
+- In some implementations, read-write locks may be configured to prefer one of
+  readers or writers. Should we support that? The reason it's not implemented
+  right now is because it's quite messy and tricky to do so.
+  
+- Perhaps we could sleep with exponential backoff when spinlocks are contested.
+  STLPort does something like that, and it seems to work quite well.
+  
+- The signal thread is not a proper pthread. However, it can still use some
+  functions that do not access the descriptor (i.e: lock and unlock basic
+  mutexes and create other threads). Do we want it to become a pthread? I'm
+  against the idea because applications should only interact with the signal
+  thread via '__msg_sig_post', but there can be some benefits in making it
+  a true pthread.
+
+- Implement 'pthread_atfork' (probably needs to access some internal glibc
+  symbols), and 'pthread_hurd_cond_*wait' (See if they are necessary; perhaps
+  we can use the standard functions and return EINTR when interrupted).
+  
+- Add support for libthread_db once HLPT is stable.
+
+[ GLIBC ]
+
+- Signal states should be chained in a doubly-linked list to allow O(1)
+  removal. This will speed up thread destruction. Additionally, they shouldn't
+  be forcibly malloc'ed. Freshly created pthreads can easily embed their signal
+  state inside the descriptor structure.
+  
+- Correctly implement cancellation points. This should be very easy now.
+
+- Use low-level locks at several parts. In particular, stdio should be
+  using them now.
+  
+[ GNUMACH ]
+
+- Add the RPC 'thread_terminate_release2'.
+
+- Export the GSYNC_* constants. Maybe to <gnumach.h> ?
