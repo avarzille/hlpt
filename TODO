@@ -39,6 +39,10 @@ This list is incomplete. I'm just adding stuff as I remember.
 - Implement 'pthread_atfork' (probably needs to access some internal glibc
   symbols), and 'pthread_hurd_cond_*wait' (See if they are necessary; perhaps
   we can use the standard functions and return EINTR when interrupted).
+
+- Replace the needed function pointer for ld.so. We need to modify the 
+  following: dl_init_static_tls, dl_wait_lookup_done, dl_error_catch_tsd and
+  dl_rtld_*lock_recursive (Possibly).
   
 - Add support for libthread_db once HLPT is stable.
 
