@@ -17,6 +17,7 @@
 */
 
 #include "pt-internal.h"
+#include <hurd/signal.h>
 #include "lowlevellock.h"
 #include "../sysdeps/atomic.h"
 #include "sysdep.h"
@@ -212,6 +213,10 @@ int pthread_cond_timedwait (pthread_cond_t *condp,
   struct cv_cleanup cc = { .condp = condp, .mtxp = mtxp };
   int pshared = condp->__flags & GSYNC_SHARED;
   clockid_t clk = condp->__flags >> COND_CLK_SHIFT;
+  
+  /* Validate the timeout parameter. */
+  if (tsp->tv_nsec < 0 || tsp->tv_nsec >= 1000000000)
+    return (EINVAL);
 
   if (pshared == 0 && condp->__mutex == NULL)
     atomic_store (&condp->__mutex, mtxp);
@@ -286,5 +291,143 @@ int pthread_cond_broadcast (pthread_cond_t *condp)
 int pthread_cond_destroy (pthread_cond_t *condp)
 {
   return (atomic_load (&condp->__sw.hi) != 0 ? EBUSY : 0);
+}
+
+int pthread_hurd_cond_wait_np (pthread_cond_t *condp, pthread_mutex_t *mtxp)
+{
+  struct hurd_sigstate *stp = __pthread_sigstate (PTHREAD_SELF);
+
+  __spin_lock (&stp->lock);
+
+  /* If we were cancelled previous to this call, don't do anything. */
+  if (stp->cancel)
+    {
+      stp->cancel = 0;
+      __spin_unlock (&stp->lock);
+      return (EINTR);
+    }
+
+  union hurd_qval tmp;
+  int pshared = condp->__flags & GSYNC_SHARED;
+
+  void cancel_self (void)
+    {
+      /* We have to wake the interrupted thread. However, there's
+       * no way to specify which thread is to be awakened with
+       * 'gsync_wake', so we just do a broadcast. */
+      atomic_add (&condp->__sw.lo, 1);
+      lll_wake (&condp->__sw.lo, pshared | GSYNC_BROADCAST);
+    }
+
+  int ret = pthread_mutex_unlock (mtxp);
+  if (ret != 0)
+    {
+      __spin_unlock (&stp->lock);
+      return (ret);
+    }
+
+  /* Add ourselves as a waiter and register the cancellation callback. */
+  tmp.qv = atomic_addq_hi (&condp->__sw.qv, 1);
+  stp->cancel_hook = cancel_self;
+  __spin_unlock (&stp->lock);
+
+  while (1)
+    {
+      ret = lll_wait (&condp->__sw.lo, tmp.lo, pshared);
+      if (ret != KERN_INTERRUPTED)
+        {
+          atomic_add (&condp->__sw.hi, -1);
+          break;
+        }
+    }
+
+  /* Clear the cancellation hook and fetch the flag. */
+  __spin_lock (&stp->lock);
+  stp->cancel_hook = 0;
+
+  if (stp->cancel != 0)
+    {
+      ret = EINTR;
+      stp->cancel = 0;
+    }
+
+  __spin_unlock (&stp->lock);
+
+  if (ret != EINTR)
+    /* Only reacquire the mutex if we weren't cancelled. */
+    ret = __pthread_mutex_cond_lock (mtxp);
+
+  return (ret);
+}
+
+int pthread_hurd_cond_timedwait_np (pthread_cond_t *condp,
+  pthread_mutex_t *mtxp, const struct timespec *tsp)
+{
+  struct hurd_sigstate *stp = __pthread_sigstate (PTHREAD_SELF);
+
+  __spin_lock (&stp->lock);
+  if (stp->cancel)
+    {
+      stp->cancel = 0;
+      __spin_unlock (&stp->lock);
+      return (EINTR);
+    }
+
+  union hurd_qval tmp;
+  int pshared = condp->__flags & GSYNC_SHARED;
+  clockid_t clk = condp->__flags >> COND_CLK_SHIFT;
+
+  void cancel_self (void)
+    {
+      atomic_add (&condp->__sw.lo, 1);
+      lll_wake (&condp->__sw.lo, pshared | GSYNC_BROADCAST);
+    }
+
+  int ret = pthread_mutex_unlock (mtxp);
+  if (ret != 0)
+    {
+      __spin_unlock (&stp->lock);
+      return (ret);
+    }
+
+  tmp.qv = atomic_addq_hi (&condp->__sw.qv, 1);
+  stp->cancel_hook = cancel_self;
+  __spin_unlock (&stp->lock);
+
+  do
+    {
+      ret = lll_abstimed_wait (&condp->__sw.lo,
+        tmp.lo, tsp, pshared, clk);
+
+      if (ret == KERN_INTERRUPTED)
+        continue;
+      else if (ret != EINTR)
+        {
+          atomic_add (&condp->__sw.hi, -1);
+          if (ret == KERN_TIMEDOUT)
+            ret = ETIMEDOUT;
+        }
+    }
+  while (0);
+
+  __spin_lock (&stp->lock);
+  stp->cancel_hook = 0;
+
+  if (stp->cancel != 0)
+    {
+      ret = EINTR;
+      stp->cancel = 0;
+    }
+
+  __spin_unlock (&stp->lock);
+
+  if (ret != EINTR)
+    {
+      int r2 = __pthread_mutex_cond_lock (mtxp);
+      if (ret == 0)
+        ret = r2;
+    }
+
+  return (ret);
 }
 

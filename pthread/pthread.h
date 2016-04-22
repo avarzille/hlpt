@@ -418,6 +418,17 @@ extern int pthread_cond_wait (pthread_cond_t *__condp,
 extern int pthread_cond_timedwait (pthread_cond_t *__condp,
   pthread_mutex_t *__mtxp, const struct timespec *__tsp)
   __nonnull ((1, 2, 3));
+  
+/* The following behave like the above functions, except they are not
+ * cancellation points; instead, they allow the calling thread to be
+ * asynchronously interrupted and return EINTR in such a case, but
+ * without reacquiring the mutex. */
+extern int pthread_hurd_cond_wait_np (pthread_cond_t *__condp,
+  pthread_mutex_t *__mtxp) __nonnull ((1, 2));
+
+extern int pthread_hurd_cond_timedwait_np (pthread_cond_t *__condp,
+  pthread_mutex_t *__mtxp, const struct timespec *__tsp)
+  __nonnull ((1, 2, 3));
 
 /* Wake one of the threads waiting on condvar CONDP. */
 extern int pthread_cond_signal (pthread_cond_t *__condp)
