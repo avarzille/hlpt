@@ -35,10 +35,9 @@ This list is incomplete. I'm just adding stuff as I remember.
   against the idea because applications should only interact with the signal
   thread via '__msg_sig_post', but there can be some benefits in making it
   a true pthread.
-
-- Implement 'pthread_atfork' (probably needs to access some internal glibc
-  symbols), and 'pthread_hurd_cond_*wait' (See if they are necessary; perhaps
-  we can use the standard functions and return EINTR when interrupted).
+  
+- 'longjmp' should execute the cleanup handlers for the stack frames that
+  are being unwound.
 
 - Replace the needed function pointer for ld.so. We need to modify the 
   following: dl_init_static_tls, dl_wait_lookup_done, dl_error_catch_tsd and

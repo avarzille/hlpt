@@ -307,7 +307,6 @@ int pthread_hurd_cond_wait_np (pthread_cond_t *condp, pthread_mutex_t *mtxp)
       return (EINTR);
     }
 
-  union hurd_qval tmp;
   int pshared = condp->__flags & GSYNC_SHARED;
 
   void cancel_self (void)
@@ -327,7 +326,7 @@ int pthread_hurd_cond_wait_np (pthread_cond_t *condp, pthread_mutex_t *mtxp)
     }
 
   /* Add ourselves as a waiter and register the cancellation callback. */
-  tmp.qv = atomic_addq_hi (&condp->__sw.qv, 1);
+  union hurd_qval tmp =  { atomic_addq_hi (&condp->__sw.qv, 1) };
   stp->cancel_hook = cancel_self;
   __spin_unlock (&stp->lock);
 
@@ -365,6 +364,10 @@ int pthread_hurd_cond_timedwait_np (pthread_cond_t *condp,
 {
   struct hurd_sigstate *stp = __pthread_sigstate (PTHREAD_SELF);
 
+  /* Catch invalid timeouts. */
+  if (tsp->tv_nsec < 0 || tsp->tv_nsec >= 1000000000)
+    return (EINVAL);
+
   __spin_lock (&stp->lock);
   if (stp->cancel)
     {
@@ -373,9 +376,7 @@ int pthread_hurd_cond_timedwait_np (pthread_cond_t *condp,
       return (EINTR);
     }
 
-  union hurd_qval tmp;
   int pshared = condp->__flags & GSYNC_SHARED;
-  clockid_t clk = condp->__flags >> COND_CLK_SHIFT;
 
   void cancel_self (void)
     {
@@ -390,9 +391,11 @@ int pthread_hurd_cond_timedwait_np (pthread_cond_t *condp,
       return (ret);
     }
 
-  tmp.qv = atomic_addq_hi (&condp->__sw.qv, 1);
+  union hurd_qval tmp =  { atomic_addq_hi (&condp->__sw.qv, 1) };
   stp->cancel_hook = cancel_self;
   __spin_unlock (&stp->lock);
+
+  clockid_t clk = condp->__flags >> COND_CLK_SHIFT;
 
   do
     {

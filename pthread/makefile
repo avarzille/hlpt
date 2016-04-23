@@ -3,8 +3,8 @@ CWD = $(shell pwd)
 CFLAGS = -Wall -Wextra -g -I$(CWD)/../ -D_GNU_SOURCE -fpic -msse2 -O2
 
 OBJS = attr.o barrier.o cancel.o cond.o create.o detach.o exit.o   \
-       init.o join.o lowlevellock.o misc.o mutex.o np.o once.o   \
-       rwlock.o sem.o signal.o specific.o spinlock.o
+       fork.o init.o join.o lowlevellock.o misc.o mutex.o np.o   \
+       once.o rwlock.o sem.o signal.o specific.o spinlock.o
 
 LIBS = -lgcc_s
 

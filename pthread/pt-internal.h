@@ -190,6 +190,9 @@ extern void __pthread_deallocate (struct pthread *);
  * to terminate it. */
 extern void __pthread_cleanup (struct pthread *);
 
+/* Deallocate every thread stack, except for the calling thread's. */
+extern void __pthread_free_stacks (struct pthread *);
+
 /* Switch cancellation type from deferred to asynchronous; start
  * a cancellation point. */
 extern int __pthread_cancelpoint_begin (void);

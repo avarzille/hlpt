@@ -310,3 +310,18 @@ void __pthread_deallocate (struct pthread *pt)
     free_stack (pt);
 }
 
+void __pthread_free_stacks (struct pthread *self)
+{
+  struct hurd_list *runp;
+
+  hurd_list_each (&__running_threads, runp)
+    {
+      struct pthread *pt = hurd_list_entry (runp, struct pthread, link);
+      if (pt == self)
+        continue;
+
+      dealloc_tls (pt);
+      free_stack (pt);
+    }
+}
+

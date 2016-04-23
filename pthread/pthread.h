@@ -22,6 +22,12 @@
 #undef _PTHREAD_H
 #define _PTHREAD_H   1
 
+#undef _PTHREADTYPES_H
+#define _PTHREADTYPES_H   1
+
+#undef _BITS_PTHREAD_H
+#define _BITS_PTHREAD_H   1
+
 #include <hurd/qval.h>
 #include <time.h>
 #include <sched.h>
@@ -195,6 +201,14 @@ extern int pthread_getschedparam (pthread_t __th,
 
 /* Set the scheduling priority for thread TH to PRIO. */
 extern int pthread_setschedprio (pthread_t __th, int __prio) __THROW;
+
+/* Register callbacks to be executed when a thread calls 'fork'. The
+ * PREPARE callbacks are called in LIFO order before the child process
+ * is created. The PARENT callbacks are called in FIFO order in the
+ * parent process after the 'fork', and the CHILD callbacks are also
+ * called in FIFO order, but in the child process after creation. */
+extern int pthread_atfork (void (*__prepare) (void),
+  void (*__parent) (void), void (*__child) (void));
 
 /* Process shared flags. */
 enum
