@@ -22,7 +22,7 @@
 #undef _SEMAPHORE_H
 #define _SEMAPHORE_H   1
 
-#include <hurd/qval.h>
+#include <hurd/xint.h>
 #include <time.h>
 #include <sys/cdefs.h>
 
@@ -36,7 +36,7 @@ __BEGIN_DECLS
 /* POSIX semaphore type. */
 typedef struct
 {
-  union hurd_qval __vw;
+  union hurd_xint __val_nw;
   int __flags;
 } sem_t;
 

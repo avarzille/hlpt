@@ -31,7 +31,7 @@ int pthread_detach (pthread_t th)
   else if (DETACHED_P (pt))
     ret = EINVAL;
   else if (atomic_cas_bool (&pt->joinpt, NULL, pt) &&
-      (pt->flags & PTHREAD_FLG_EXITING) != 0)
+      (pt->flags & PT_FLG_EXITING) != 0)
     {
       /* The thread is performing cleanup thinking it's
        * joinable. Wait for it to finish and then deallocate

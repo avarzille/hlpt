@@ -88,41 +88,11 @@ int pthread_cond_init (pthread_cond_t *condp,
   if (attrp == NULL)
     attrp = &dfl_attr;
 
-  condp->__sw.qv = 0;
+  condp->__seq_nw.qv = 0;
   condp->__mutex = NULL;
   condp->__flags = attrp->__flags;
   return (0);
 }
-
-/* We have a 64-bit integer that we divide into two 32-bit limbs, one for
- * the sequence number, and the other for the waiters count. However, when
- * atomically incrementing this 64-bit value, we want to avoid wrapping at
- * the limb level (one of the limbs could be inadvertently reset'd). The
- * following macros take care of that, adding to one of the limbs without
- * disturbing the other. */
-static unsigned long long
-atomic_addq_off (unsigned long long *ptr, int off, int val)
-{
-  union hurd_qval ret;
-
-  while (1)
-    {
-      ret.qv = atomic_loadq (ptr);
-      union hurd_qval tmp = ret;
-
-      *(unsigned int *)((char *)&tmp + off) += val;
-      if (atomic_casq_bool (ptr, ret.lo, ret.hi, tmp.lo, tmp.hi))
-        break;
-    }
-
-  return (ret.qv);
-}
-
-#define atomic_addq_lo(ptr, val)   \
-  atomic_addq_off ((ptr), offsetof (union hurd_qval, lo), (val))
-
-#define atomic_addq_hi(ptr, val)   \
-  atomic_addq_off ((ptr), offsetof (union hurd_qval, hi), (val))
 
 /* Wait and signal routines. */
 
@@ -138,9 +108,9 @@ __pthread_mutex_cond_lock (pthread_mutex_t *mtxp)
     {
       if (!(mtxp->__flags & PTHREAD_MUTEX_ROBUST))
         atomic_store (&mtxp->__lock, 2);
-      else if (!(mtxp->__lock & LLL_WAITERS_BIT))
+      else if (!(mtxp->__lock & LLL_WAITERS))
         /* This should be faster than an 'atomic_or'. */
-        atomic_store (&mtxp->__lock, mtxp->__lock | LLL_WAITERS_BIT);
+        atomic_store (&mtxp->__lock, mtxp->__lock | LLL_WAITERS);
     }
 
   return (ret);
@@ -148,7 +118,7 @@ __pthread_mutex_cond_lock (pthread_mutex_t *mtxp)
 
 struct cv_cleanup
 {
-  union hurd_qval sw;
+  union hurd_xint sw;
   pthread_cond_t *condp;
   pthread_mutex_t *mtxp;
 };
@@ -158,13 +128,13 @@ cleanup (void *argp)
 {
   struct cv_cleanup *ccp = (struct cv_cleanup *)argp;
   /* Decrement the waiters count, and fetch the wakeup sequence. */
-  union hurd_qval tmp = { atomic_addq_hi (&ccp->condp->__sw.qv, -1) };
+  union hurd_xint tmp = { atomic_addx_hi (&ccp->condp->__seq_nw.qv, -1) };
 
   if (ccp->sw.lo != tmp.lo)
     /* The wakeup sequence has changed. There's no way
      * to know if we actually consumed a notify call, so
      * we do a broadcast to make sure no signal gets lost. */
-    lll_wake (&ccp->condp->__sw.lo,
+    lll_wake (&ccp->condp->__seq_nw.lo,
       ccp->condp->__flags | GSYNC_BROADCAST);
 
   /* Reaquire the mutex. */
@@ -174,11 +144,11 @@ cleanup (void *argp)
 int pthread_cond_wait (pthread_cond_t *condp, pthread_mutex_t *mtxp)
 {
   struct cv_cleanup cc = { .condp = condp, .mtxp = mtxp };
-  int pshared = condp->__flags & GSYNC_SHARED;
+  int flags = condp->__flags & GSYNC_SHARED;
 
   /* Remember the mutex that is coupled with the condvar, but only
    * if it's a task-local object. */
-  if (pshared == 0 && condp->__mutex == NULL)
+  if (!(flags & GSYNC_SHARED) && condp->__mutex == NULL)
     atomic_store (&condp->__mutex, mtxp);
 
   int ret = pthread_mutex_unlock (mtxp);
@@ -186,22 +156,22 @@ int pthread_cond_wait (pthread_cond_t *condp, pthread_mutex_t *mtxp)
     return (ret);
 
   /* Add ourselves as waiters and register the cancellation handler. */
-  cc.sw.qv = atomic_addq_hi (&condp->__sw.qv, 1);
+  cc.sw.qv = atomic_addx_hi (&condp->__seq_nw.qv, 1);
   pthread_cleanup_push (cleanup, &cc);
 
-  while (1)
+  do
     {
       /* Switch to async mode before blocking. */
       int prev = __pthread_cancelpoint_begin ();
-      ret = lll_wait (&condp->__sw.lo, cc.sw.lo, pshared);
+      ret = lll_wait (&condp->__seq_nw.lo, cc.sw.lo, flags);
       __pthread_cancelpoint_end (prev);
 
-      if (ret != KERN_INTERRUPTED)
-        {
-          atomic_add (&condp->__sw.hi, -1);
-          break;
-        }
+      if (ret == KERN_INTERRUPTED)
+        continue;
+
+      atomic_add (&condp->__seq_nw.hi, -1);
     }
+  while (0);
 
   pthread_cleanup_pop (0);
   return (__pthread_mutex_cond_lock (mtxp));
@@ -225,13 +195,13 @@ int pthread_cond_timedwait (pthread_cond_t *condp,
   if (ret != 0)
     return (ret);
 
-  cc.sw.qv = atomic_addq_hi (&condp->__sw.qv, 1);
+  cc.sw.qv = atomic_addx_hi (&condp->__seq_nw.qv, 1);
   pthread_cleanup_push (cleanup, &cc);
 
   do
     {
       int prev = __pthread_cancelpoint_begin ();
-      ret = lll_abstimed_wait (&condp->__sw.lo,
+      ret = lll_abstimed_wait (&condp->__seq_nw.lo,
         cc.sw.lo, tsp, pshared, clk);
       __pthread_cancelpoint_end (prev);
 
@@ -240,7 +210,7 @@ int pthread_cond_timedwait (pthread_cond_t *condp,
       else if (ret == KERN_TIMEDOUT)
         ret = ETIMEDOUT;
 
-      atomic_add (&condp->__sw.hi, -1);
+      atomic_add (&condp->__seq_nw.hi, -1);
     }
   while (0);
 
@@ -258,17 +228,17 @@ int pthread_cond_timedwait (pthread_cond_t *condp,
 
 int pthread_cond_signal (pthread_cond_t *condp)
 {
-  union hurd_qval tmp = { atomic_addq_lo (&condp->__sw.qv, 1) };
+  union hurd_xint tmp = { atomic_addx_lo (&condp->__seq_nw.qv, 1) };
   if (tmp.hi > 0)
     /* There are waiters; wake one of them. */
-    lll_wake (&condp->__sw.lo, condp->__flags & GSYNC_SHARED);
+    lll_wake (&condp->__seq_nw.lo, condp->__flags & GSYNC_SHARED);
 
   return (0);
 }
 
 int pthread_cond_broadcast (pthread_cond_t *condp)
 {
-  union hurd_qval tmp = { atomic_addq_lo (&condp->__sw.qv, 1) };
+  union hurd_xint tmp = { atomic_addx_lo (&condp->__seq_nw.qv, 1) };
 
   if (tmp.hi > 0)
     {
@@ -279,10 +249,10 @@ int pthread_cond_broadcast (pthread_cond_t *condp)
          * have a single waiter be awakened, and the rest moved into
          * waiting for the mutex instead. This avoids the infamous
          * 'thundering herd' issue. */
-        lll_requeue (&condp->__sw.lo, &condp->__mutex->__lock, 1, flags);
+        lll_requeue (&condp->__seq_nw.lo, &condp->__mutex->__lock, 1, flags);
       else
         /* No mutex. Wake every waiter. */
-        lll_wake (&condp->__sw.lo, flags);
+        lll_wake (&condp->__seq_nw.lo, flags);
     }
 
   return (0);
@@ -290,15 +260,18 @@ int pthread_cond_broadcast (pthread_cond_t *condp)
 
 int pthread_cond_destroy (pthread_cond_t *condp)
 {
-  return (atomic_load (&condp->__sw.hi) != 0 ? EBUSY : 0);
+  return (atomic_load (&condp->__seq_nw.hi) != 0 ? EBUSY : 0);
 }
 
-int pthread_hurd_cond_wait_np (pthread_cond_t *condp, pthread_mutex_t *mtxp)
+static int
+pt_hurd_cond_wait (pthread_cond_t *condp, pthread_mutex_t *mtxp,
+  const struct timespec *tsp)
 {
-  struct hurd_sigstate *stp = __pthread_sigstate (PTHREAD_SELF);
+  struct hurd_sigstate *stp = _hurd_self_sigstate ();
+  if (tsp != NULL && (tsp->tv_nsec < 0 || tsp->tv_nsec >= 1000000000))
+    return (EINVAL);
 
   __spin_lock (&stp->lock);
-
   /* If we were cancelled previous to this call, don't do anything. */
   if (stp->cancel)
     {
@@ -307,16 +280,19 @@ int pthread_hurd_cond_wait_np (pthread_cond_t *condp, pthread_mutex_t *mtxp)
       return (EINTR);
     }
 
-  int pshared = condp->__flags & GSYNC_SHARED;
+  int flags = condp->__flags & GSYNC_SHARED;
 
   void cancel_self (void)
     {
       /* We have to wake the interrupted thread. However, there's
        * no way to specify which thread is to be awakened with
        * 'gsync_wake', so we just do a broadcast. */
-      atomic_add (&condp->__sw.lo, 1);
-      lll_wake (&condp->__sw.lo, pshared | GSYNC_BROADCAST);
+      atomic_add (&condp->__seq_nw.lo, 1);
+      lll_wake (&condp->__seq_nw.lo, flags | GSYNC_BROADCAST);
     }
+
+  if (!(flags & GSYNC_SHARED) && condp->__mutex == NULL)
+    atomic_store (&condp->__mutex, mtxp);
 
   int ret = pthread_mutex_unlock (mtxp);
   if (ret != 0)
@@ -326,19 +302,23 @@ int pthread_hurd_cond_wait_np (pthread_cond_t *condp, pthread_mutex_t *mtxp)
     }
 
   /* Add ourselves as a waiter and register the cancellation callback. */
-  union hurd_qval tmp =  { atomic_addq_hi (&condp->__sw.qv, 1) };
+  union hurd_xint tmp =  { atomic_addx_hi (&condp->__seq_nw.qv, 1) };
   stp->cancel_hook = cancel_self;
   __spin_unlock (&stp->lock);
 
-  while (1)
+  do
     {
-      ret = lll_wait (&condp->__sw.lo, tmp.lo, pshared);
-      if (ret != KERN_INTERRUPTED)
-        {
-          atomic_add (&condp->__sw.hi, -1);
-          break;
-        }
+      ret = tsp == NULL ? lll_wait (&condp->__seq_nw.lo, tmp.lo, flags) :
+        lll_abstimed_wait (&condp->__seq_nw.lo, tmp.lo, tsp, flags);
+
+      if (ret == KERN_INTERRUPTED)
+        continue;
+      else if (ret == KERN_TIMEDOUT)
+        ret = ETIMEDOUT;
+
+      atomic_add (&condp->__seq_nw.hi, -1);
     }
+  while (0);
 
   /* Clear the cancellation hook and fetch the flag. */
   __spin_lock (&stp->lock);
@@ -359,78 +339,14 @@ int pthread_hurd_cond_wait_np (pthread_cond_t *condp, pthread_mutex_t *mtxp)
   return (ret);
 }
 
+int pthread_hurd_cond_wait_np (pthread_cond_t *condp, pthread_mutex_t *mtxp)
+{
+  return (pt_hurd_cond_wait (condp, mtxp, NULL));
+}
+
 int pthread_hurd_cond_timedwait_np (pthread_cond_t *condp,
   pthread_mutex_t *mtxp, const struct timespec *tsp)
 {
-  struct hurd_sigstate *stp = __pthread_sigstate (PTHREAD_SELF);
-
-  /* Catch invalid timeouts. */
-  if (tsp->tv_nsec < 0 || tsp->tv_nsec >= 1000000000)
-    return (EINVAL);
-
-  __spin_lock (&stp->lock);
-  if (stp->cancel)
-    {
-      stp->cancel = 0;
-      __spin_unlock (&stp->lock);
-      return (EINTR);
-    }
-
-  int pshared = condp->__flags & GSYNC_SHARED;
-
-  void cancel_self (void)
-    {
-      atomic_add (&condp->__sw.lo, 1);
-      lll_wake (&condp->__sw.lo, pshared | GSYNC_BROADCAST);
-    }
-
-  int ret = pthread_mutex_unlock (mtxp);
-  if (ret != 0)
-    {
-      __spin_unlock (&stp->lock);
-      return (ret);
-    }
-
-  union hurd_qval tmp =  { atomic_addq_hi (&condp->__sw.qv, 1) };
-  stp->cancel_hook = cancel_self;
-  __spin_unlock (&stp->lock);
-
-  clockid_t clk = condp->__flags >> COND_CLK_SHIFT;
-
-  do
-    {
-      ret = lll_abstimed_wait (&condp->__sw.lo,
-        tmp.lo, tsp, pshared, clk);
-
-      if (ret == KERN_INTERRUPTED)
-        continue;
-      else if (ret != EINTR)
-        {
-          atomic_add (&condp->__sw.hi, -1);
-          if (ret == KERN_TIMEDOUT)
-            ret = ETIMEDOUT;
-        }
-    }
-  while (0);
-
-  __spin_lock (&stp->lock);
-  stp->cancel_hook = 0;
-
-  if (stp->cancel != 0)
-    {
-      ret = EINTR;
-      stp->cancel = 0;
-    }
-
-  __spin_unlock (&stp->lock);
-
-  if (ret != EINTR)
-    {
-      int r2 = __pthread_mutex_cond_lock (mtxp);
-      if (ret == 0)
-        ret = r2;
-    }
-
-  return (ret);
+  return (pt_hurd_cond_wait (condp, mtxp, tsp));
 }
 

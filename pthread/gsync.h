@@ -31,6 +31,10 @@
 #include <mach/mach_types.h>
 #include <mach_debug/mach_debug_types.h>
 
+extern mach_msg_return_t _hurd_intr_rpc_mach_msg (mach_msg_header_t *,
+  mach_msg_option_t, mach_msg_size_t, mach_msg_size_t,
+  mach_port_t, mach_msg_timeout_t, mach_port_t);
+
 /* Routine gsync_wait */
 mig_external kern_return_t gsync_wait
 (
@@ -148,16 +152,19 @@ mig_external kern_return_t gsync_wait
 	InP->Head.msgh_request_port = task;
 	InP->Head.msgh_reply_port = mig_get_reply_port();
 	InP->Head.msgh_seqno = 0;
-	InP->Head.msgh_id = 4205;
+	InP->Head.msgh_id = 4204;
 
-	msg_result = mach_msg(&InP->Head, MACH_SEND_MSG|MACH_RCV_MSG|MACH_MSG_OPTION_NONE, 64, sizeof(Reply), InP->Head.msgh_reply_port, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+    msg_result = _hurd_intr_rpc_mach_msg (&InP->Head, MACH_SEND_MSG |
+      MACH_RCV_MSG | MACH_RCV_INTERRUPT | MACH_SEND_INTERRUPT, 64, 
+      sizeof (Reply), InP->Head.msgh_reply_port,
+      MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
 	if (msg_result != MACH_MSG_SUCCESS) {
 		mig_dealloc_reply_port(InP->Head.msgh_reply_port);
 		return msg_result;
 	}
 	mig_put_reply_port(InP->Head.msgh_reply_port);
 
-	if (mig_unlikely (OutP->Head.msgh_id != 4305)) {
+	if (mig_unlikely (OutP->Head.msgh_id != 4304)) {
 		if (OutP->Head.msgh_id == MACH_NOTIFY_SEND_ONCE)
 			return MIG_SERVER_DIED;
 		else {
@@ -243,7 +250,7 @@ mig_external kern_return_t gsync_wake
 	InP->Head.msgh_request_port = task;
 	InP->Head.msgh_reply_port = MACH_PORT_NULL;
 	InP->Head.msgh_seqno = 0;
-	InP->Head.msgh_id = 4206;
+	InP->Head.msgh_id = 4205;
 
 	return mach_msg(&InP->Head, MACH_SEND_MSG|MACH_MSG_OPTION_NONE, 48, 0, MACH_PORT_NULL, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
 }
@@ -339,7 +346,7 @@ mig_external kern_return_t gsync_requeue
 	InP->Head.msgh_request_port = task;
 	InP->Head.msgh_reply_port = MACH_PORT_NULL;
 	InP->Head.msgh_seqno = 0;
-	InP->Head.msgh_id = 4207;
+	InP->Head.msgh_id = 4206;
 
 	return mach_msg(&InP->Head, MACH_SEND_MSG|MACH_MSG_OPTION_NONE, 56, 0, MACH_PORT_NULL, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
 }

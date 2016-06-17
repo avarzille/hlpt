@@ -41,10 +41,23 @@
 extern void* _dl_allocate_tls (void *) internal_function;
 extern void _dl_deallocate_tls (void *, bool) internal_function;
 
+/* Free list of TCB heads. */
+static void *tls_list;
+
 static int
 alloc_tls (struct pthread *pt, mach_port_t ktid)
 {
-  if (!(pt->tcb = _dl_allocate_tls (0)))
+  while (1)
+    {
+      if ((pt->tcb = tls_list) == NULL)
+        break;
+
+      void *next = *(void **)pt->tcb;
+      if (atomic_cas_bool (&tls_list, pt->tcb, next))
+        break;
+    }
+
+  if (!(pt->tcb = _dl_allocate_tls (pt->tcb)))
     return (-1);
 
   /* Link the TCB and thread descriptor together. */
@@ -55,8 +68,18 @@ alloc_tls (struct pthread *pt, mach_port_t ktid)
 static void
 dealloc_tls (struct pthread *pt)
 {
-  _dl_deallocate_tls (pt->tcb,
-    !(pt->flags & PTHREAD_FLG_MAIN_THREAD));
+  _dl_deallocate_tls (pt->tcb, false);
+#ifdef CLEAR_TCB
+  CLEAR_TCB (pt->tcb);
+#endif
+  while (1)
+    {
+      void *tmp = tls_list;
+      *(void **)pt->tcb = tmp;
+      if (atomic_cas_bool (&tls_list, tmp, pt->tcb))
+        break;
+    }
+
   pt->tcb = NULL;
 }
 
@@ -71,7 +94,7 @@ roundup_page (size_t size)
 static inline void
 free_stack (struct pthread *pt)
 {
-  if (pt->flags & PTHREAD_FLG_USR_STACK)
+  if (pt->flags & PT_FLG_USR_STACK)
     return;
 
   size_t total = pt->stacksize + pt->guardsize;
@@ -122,7 +145,7 @@ pt_allocate (const pthread_attr_t *attrp)
   if (attrp->__stack != 0)
     {
       memset (pt, 0, sizeof (*pt));
-      pt->flags |= PTHREAD_FLG_USR_STACK;
+      pt->flags |= PT_FLG_USR_STACK;
     }
 
   /* Initialize pthread descriptor. */
@@ -198,7 +221,7 @@ void __pthread_cleanup (struct pthread *pt)
   /* Make sure the local variable above is set before
    * marking the thread as in the 'exiting' state. */
   atomic_mfence ();
-  atomic_or (&pt->flags, PTHREAD_FLG_EXITING);
+  atomic_or (&pt->flags, PT_FLG_EXITING);
 
   lll_lock (&__running_threads_lock, 0);
   hurd_list_del (&pt->link);
@@ -236,7 +259,7 @@ void __pthread_cleanup (struct pthread *pt)
     /* If the thread is joinable, ask the kernel to
      * signal us once it's terminated. */
     death_ev = (vm_address_t)&pt->id;
-  else if (!(pt->flags & PTHREAD_FLG_USR_STACK))
+  else if (!(pt->flags & PT_FLG_USR_STACK))
     {
       size = pt->stacksize + pt->guardsize;
       stack = (vm_address_t)pt->stack - pt->guardsize;
@@ -305,8 +328,8 @@ int pthread_create (pthread_t *ptp, const pthread_attr_t *attrp,
 
 void __pthread_deallocate (struct pthread *pt)
 {
-  if ((atomic_or (&pt->flags, PTHREAD_FLG_TERMINATED) &
-      PTHREAD_FLG_TERMINATED) == 0)
+  if ((atomic_or (&pt->flags, PT_FLG_TERMINATED) &
+      PT_FLG_TERMINATED) == 0)
     free_stack (pt);
 }
 

@@ -16,13 +16,13 @@
    <http://www.gnu.org/licenses/>.
 */
 
-#ifndef __HURD_QVAL_H__
-#define __HURD_QVAL_H__   1
+#ifndef __HURD_XINT_H__
+#define __HURD_XINT_H__   1
 
 /* 64-bit integer that allows direct access to its low
  * and high limbs. */
 
-union hurd_qval
+union hurd_xint
 {
   unsigned long long qv;
   struct
@@ -30,9 +30,9 @@ union hurd_qval
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
       unsigned int hi;
       unsigned int lo;
-#  define hurd_qval_pair(lo, hi)   hi, lo
+#  define hurd_xint_pair(lo, hi)   hi, lo
 #else
-#  define hurd_qval_pair(lo, hi)   lo, hi
+#  define hurd_xint_pair(lo, hi)   lo, hi
       unsigned int lo;
       unsigned int hi;
 #endif

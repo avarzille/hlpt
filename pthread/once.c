@@ -49,7 +49,8 @@ cleanup (void *argp)
 {
   /* During cleanup, wake everyone and reset the value
    * to its initial state. */
-  lll_set_wake (argp, ONCE_INIT, GSYNC_BROADCAST);
+  *(unsigned int *)argp = ONCE_INIT;
+  lll_wake (argp, GSYNC_BROADCAST);
 }
 
 int pthread_once (pthread_once_t *ctp, void (*fct) (void))
@@ -85,6 +86,7 @@ int pthread_once (pthread_once_t *ctp, void (*fct) (void))
           /* Now, set the value to its final state, and let everyone
            * know that we finished the job. */
           lll_set_wake (ctp, ONCE_DONE, GSYNC_BROADCAST);
+          break;
         }
     }
 

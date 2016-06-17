@@ -37,7 +37,7 @@ int pthread_kill (pthread_t th, int sig)
 
 int pthread_sigmask (int how, const sigset_t *setp, sigset_t *prevp)
 {
-  struct hurd_sigstate *stp = __pthread_sigstate (PTHREAD_SELF);
+  struct hurd_sigstate *stp = _hurd_self_sigstate ();
   _hurd_sigstate_lock (stp);
 
   if (prevp != NULL)

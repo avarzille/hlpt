@@ -72,7 +72,7 @@ void pthread_exit (void *retval)
   struct pthread *self = PTHREAD_SELF;
 
   self->retval = retval;
-  atomic_or (&self->flags, PTHREAD_FLG_EXITING);
+  atomic_or (&self->flags, PT_FLG_EXITING);
 
   /* The exception we use for forced stack unwinding can be considered
    * as 'special', so the class remains zero. On the other hand, we do

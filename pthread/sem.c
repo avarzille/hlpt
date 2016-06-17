@@ -36,15 +36,15 @@ int sem_init (sem_t *semp, int pshared, unsigned int val)
   if (val > SEM_VALUE_MAX)
     return (EINVAL);
 
-  semp->__vw.lo = val;
-  semp->__vw.hi = 0;
+  semp->__val_nw.lo = val;
+  semp->__val_nw.hi = 0;
   semp->__flags = pshared ? GSYNC_SHARED : 0;
   return (0);
 }
 
 int sem_post (sem_t *semp)
 {
-  union hurd_qval tmp;
+  union hurd_xint tmp;
 
   /* Bump the semaphore's counter value and also fetch the number of
    * waiters. Before incrementing, test that the counter does not
@@ -52,20 +52,20 @@ int sem_post (sem_t *semp)
 
   while (1)
     {
-      tmp.qv = atomic_loadq (&semp->__vw.qv);
+      tmp.qv = atomic_loadx (&semp->__val_nw.qv);
       if (tmp.lo == SEM_VALUE_MAX)
         {
           errno = EOVERFLOW;
           return (-1);
         }
-      else if (atomic_casq_bool (&semp->__vw.qv,
+      else if (atomic_casx_bool (&semp->__val_nw.qv,
           tmp.lo, tmp.hi, tmp.lo + 1, tmp.hi))
         break;
     }
 
   /* If there were waiters, wake one of them. */
   if (tmp.hi > 0)
-    lll_wake (&semp->__vw.lo, semp->__flags);
+    lll_wake (&semp->__val_nw.lo, semp->__flags);
 
   return (0);
 }
@@ -75,10 +75,10 @@ __sem_trywait (sem_t *semp)
 {
   while (1)
     {
-      unsigned int val = atomic_load (&semp->__vw.lo);
+      unsigned int val = atomic_load (&semp->__val_nw.lo);
       if (val == 0)
         return (-1);
-      else if (atomic_cas_bool (&semp->__vw.lo, val, val - 1))
+      else if (atomic_cas_bool (&semp->__val_nw.lo, val, val - 1))
         return (0);
     }
 }
@@ -86,7 +86,7 @@ __sem_trywait (sem_t *semp)
 static void
 cleanup (void *argp)
 {
-  atomic_add ((unsigned int *)argp, -1);
+  atomic_addx_hi ((unsigned long long *)argp, -1);
 }
 
 int sem_wait (sem_t *semp)
@@ -99,17 +99,17 @@ int sem_wait (sem_t *semp)
 
   /* Slow path: Add ourselves as a waiter, set up things for
    * cancellation handling and begin looping. */
-  atomic_add (&semp->__vw.hi, +1);
-  pthread_cleanup_push (cleanup, &semp->__vw.hi);
+  atomic_addx_hi (&semp->__val_nw.qv, 1);
+  pthread_cleanup_push (cleanup, &semp->__val_nw.qv);
 
   while (1)
     {
       /* Try to simultaneously decrement the counter and
        * remove ourselves as a waiter. */
-      union hurd_qval tmp = { atomic_loadq (&semp->__vw.qv) };
+      union hurd_xint tmp = { atomic_loadx (&semp->__val_nw.qv) };
       if (tmp.lo > 0)
         {
-          if (atomic_casq_bool (&semp->__vw.qv,
+          if (atomic_casx_bool (&semp->__val_nw.qv,
               tmp.lo, tmp.hi, tmp.lo - 1, tmp.hi - 1))
             break;
           else
@@ -119,7 +119,7 @@ int sem_wait (sem_t *semp)
       /* Enable async cancellation, block on the counter's
        * address and restore the previous cancellation type. */
       int prev = __pthread_cancelpoint_begin ();
-      int res = lll_wait (&semp->__vw.lo, 0, semp->__flags);
+      int res = lll_wait (&semp->__val_nw.lo, 0, semp->__flags);
       __pthread_cancelpoint_end (prev);
 
       if (res == KERN_INTERRUPTED)
@@ -152,15 +152,15 @@ int sem_timedwait (sem_t *semp, const struct timespec *tsp)
   if (__sem_trywait (semp) == 0)
     return (0);
 
-  atomic_add (&semp->__vw.hi, +1);
-  pthread_cleanup_push (cleanup, &semp->__vw.hi);
+  atomic_addx_hi (&semp->__val_nw.qv, 1);
+  pthread_cleanup_push (cleanup, &semp->__val_nw.qv);
 
   while (1)
     {
-      union hurd_qval tmp = { atomic_loadq (&semp->__vw.qv) };
+      union hurd_xint tmp = { atomic_loadx (&semp->__val_nw.qv) };
       if (tmp.lo > 0)
         {
-          if (atomic_casq_bool (&semp->__vw.qv,
+          if (atomic_casx_bool (&semp->__val_nw.qv,
               tmp.lo, tmp.hi, tmp.lo - 1, tmp.hi - 1))
             break;
           else
@@ -169,7 +169,7 @@ int sem_timedwait (sem_t *semp, const struct timespec *tsp)
       /* We have to check the timeout parameter on every iteration,
        * because its value may not be examined if the semaphore can
        * be locked without blocking. */
-      else if (__glibc_unlikely (tsp->tv_sec < 0 ||
+      else if (__glibc_unlikely (tsp->tv_nsec < 0 ||
           tsp->tv_nsec >= 1000000000))
         {
           errno = ETIMEDOUT;
@@ -178,7 +178,7 @@ int sem_timedwait (sem_t *semp, const struct timespec *tsp)
         }
 
       int prev = __pthread_cancelpoint_begin ();
-      int res = lll_abstimed_wait (&semp->__vw.lo, 0, tsp, semp->__flags);
+      int res = lll_abstimed_wait (&semp->__val_nw.lo, 0, tsp, semp->__flags);
       __pthread_cancelpoint_end (prev);
 
       if (res == KERN_INTERRUPTED || res == KERN_TIMEDOUT)
@@ -196,13 +196,13 @@ int sem_timedwait (sem_t *semp, const struct timespec *tsp)
 
 int sem_getvalue (sem_t *semp, int *outp)
 {
-  *outp = atomic_load (&semp->__vw.lo);
+  *outp = atomic_load (&semp->__val_nw.lo);
   return (0);
 }
 
 int sem_destroy (sem_t *semp)
 {
-  if (__glibc_unlikely (atomic_load (&semp->__vw.hi) != 0))
+  if (__glibc_unlikely (atomic_load (&semp->__val_nw.hi) != 0))
     {
       errno = EBUSY;
       return (-1);
@@ -444,16 +444,16 @@ sem_t* sem_open (const char *name, int oflag, ...)
   else
     {
       va_list ap;
-      sem_t tmp = { .__vw = { .hi = 0 }, .__flags = GSYNC_SHARED };
+      sem_t tmp = { .__val_nw = { .hi = 0 }, .__flags = GSYNC_SHARED };
       mode_t mode;
 
     try_create:
       va_start (ap, oflag);
       mode = va_arg (ap, mode_t);
-      tmp.__vw.lo = va_arg (ap, unsigned int);
+      tmp.__val_nw.lo = va_arg (ap, unsigned int);
       va_end (ap);
 
-      if (tmp.__vw.lo > SEM_VALUE_MAX)
+      if (tmp.__val_nw.lo > SEM_VALUE_MAX)
         {
           errno = EINVAL;
           return (ret);

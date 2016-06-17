@@ -63,7 +63,7 @@ void  __attribute__ ((constructor)) __pthread_initialize (void)
 
   /* The main thread's stack may not be deallocated by hand,
    * and is also special w.r.t its TLS area. */
-  pt->flags |= PTHREAD_FLG_USR_STACK | PTHREAD_FLG_MAIN_THREAD;
+  pt->flags |= PT_FLG_USR_STACK | PT_FLG_MAIN_THREAD;
 
   /* Initialize the pthread default attributes. */
   struct rlimit lim;

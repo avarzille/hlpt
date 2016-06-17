@@ -32,28 +32,28 @@ struct timespec;
 #define KERN_INTERRUPTED   28
 
 /* Flags for robust locks. */
-#define LLL_WAITERS_BIT      (1U << 31)
-#define LLL_DEAD_OWNER_BIT   (1U << 30)
+#define LLL_WAITERS      (1U << 31)
+#define LLL_DEAD_OWNER   (1U << 30)
 
-#define LLL_OWNER_MASK   ~(LLL_WAITERS_BIT | LLL_DEAD_OWNER_BIT)
+#define LLL_OWNER_MASK   ~(LLL_WAITERS | LLL_DEAD_OWNER)
 
 /* Convenience wrappers around the 'gsync' RPC's. */
 
 extern int lll_wait (void *__ptr, int __val, int __flags);
 
-extern int lll_qwait (void *__ptr, int __lo,
+extern int lll_xwait (void *__ptr, int __lo,
   int __hi, int __flags);
 
 extern int lll_timed_wait (void *__ptr, int __val,
   int __mlsec, int __flags);
 
-extern int lll_timed_qwait (void *__ptr, int __lo,
+extern int lll_timed_xwait (void *__ptr, int __lo,
   int __hi, int __mlsec, int __flags);
 
 extern int __lll_abstimed_wait (void *__ptr, int __val,
   const struct timespec *__tsp, int __flags, int __clk);
 
-extern int __lll_abstimed_qwait (void *__ptr, int __lo, int __hi,
+extern int __lll_abstimed_xwait (void *__ptr, int __lo, int __hi,
   const struct timespec *__tsp, int __flags, int __clk);
 
 extern int lll_lock (void *__ptr, int __flags);
@@ -92,10 +92,10 @@ extern void lll_requeue (void *__src, void *__dst,
        __clk[sizeof (__clk) / sizeof (__clk[0]) - 1]);   \
    })
 
-#define lll_abstimed_qwait(ptr, lo, hi, tsp, flags, ...)   \
+#define lll_abstimed_xwait(ptr, lo, hi, tsp, flags, ...)   \
   ({   \
      const clockid_t __clk[] = { CLOCK_REALTIME, ##__VA_ARGS__ };   \
-     __lll_abstimed_qwait ((ptr), (lo), (hi), (tsp), (flags),   \
+     __lll_abstimed_xwait ((ptr), (lo), (hi), (tsp), (flags),   \
        __clk[sizeof (__clk) / sizeof (__clk[0]) - 1]);   \
    })
 

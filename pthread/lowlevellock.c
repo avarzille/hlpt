@@ -30,7 +30,7 @@ int lll_wait (void *ptr, int val, int flags)
     (vm_offset_t)ptr, val, 0, 0, flags));
 }
 
-int lll_qwait (void *ptr, int lo, int hi, int flags)
+int lll_xwait (void *ptr, int lo, int hi, int flags)
 {
   return (gsync_wait (mach_task_self (),
     (vm_offset_t)ptr, lo, hi, 0, flags | GSYNC_QUAD));
@@ -42,7 +42,7 @@ int lll_timed_wait (void *ptr, int val, int mlsec, int flags)
     (vm_offset_t)ptr, val, 0, mlsec, flags | GSYNC_TIMED));
 }
 
-int lll_timed_qwait (void *ptr, int lo,
+int lll_timed_xwait (void *ptr, int lo,
   int hi, int mlsec, int flags)
 {
   return (gsync_wait (mach_task_self (), (vm_offset_t)ptr,
@@ -78,12 +78,12 @@ int __lll_abstimed_wait (void *ptr, int val,
     lll_timed_wait (ptr, val, mlsec, flags));
 }
 
-int __lll_abstimed_qwait (void *ptr, int lo, int hi,
+int __lll_abstimed_xwait (void *ptr, int lo, int hi,
   const struct timespec *tsp, int flags, int clk)
 {
   int mlsec = compute_reltime (tsp, clk);
   return (mlsec < 0 ? KERN_TIMEDOUT :
-    lll_timed_qwait (ptr, lo, hi, mlsec, flags));
+    lll_timed_xwait (ptr, lo, hi, mlsec, flags));
 }
 
 int lll_lock (void *ptr, int flags)
@@ -112,7 +112,7 @@ int __lll_abstimed_lock (void *ptr,
     {
       if (atomic_swap (iptr, 2) == 0)
         return (0);
-      else if (tsp->tv_sec < 0 || tsp->tv_nsec >= 1000000000)
+      else if (tsp->tv_nsec < 0 || tsp->tv_nsec >= 1000000000)
         return (EINVAL);
 
       int mlsec = compute_reltime (tsp, clk);
@@ -155,11 +155,11 @@ void lll_requeue (void *src, void *dst, int wake_one, int flags)
 /* Robust locks. */
 
 extern int getpid (void) __attribute__ ((const));
+extern mach_port_t pid2task (int);
 
 /* Test if a given process id is still valid. */
 static inline int valid_pid (int pid)
 {
-  extern mach_port_t pid2task (int);
   mach_port_t task = pid2task (pid);
   if (task == MACH_PORT_NULL)
     return (0);
@@ -182,21 +182,24 @@ int lll_robust_lock (void *ptr, int flags)
 {
   int *iptr = (int *)ptr;
   int id = getpid ();
-  unsigned int val = *iptr;
   int wait_time = 25;
-
-  if (val == 0 && atomic_cas_bool (iptr, val, id))
-    return (0);
-
-  atomic_or (iptr, LLL_WAITERS_BIT);
-  id |= LLL_WAITERS_BIT;
+  unsigned int val;
 
   while (1)
     {
       val = *iptr;
-      if (val == 0 && atomic_cas_bool (iptr, val, id))
+      if (val == 0 && atomic_cas_bool (iptr, 0, id))
         return (0);
-      else if (!valid_pid (val & LLL_OWNER_MASK))
+      else if (val != 0 && atomic_cas_bool (iptr, val, val | LLL_WAITERS))
+        break;
+    }
+
+  for (id |= LLL_WAITERS ; ; )
+    {
+      val = *iptr;
+      if (val == 0 && atomic_cas_bool (iptr, 0, id))
+        return (0);
+      else if (val && !valid_pid (val & LLL_OWNER_MASK))
         {
           if (atomic_cas_bool (iptr, val, id))
             return (EOWNERDEAD);
@@ -216,20 +219,23 @@ int __lll_robust_abstimed_lock (void *ptr,
   int *iptr = (int *)ptr;
   int id = getpid ();
   int wait_time = 25;
-  unsigned int val = *iptr;
-
-  if (val == 0 && atomic_cas_bool (iptr, val, id))
-    return (0);
-
-  atomic_or (iptr, LLL_WAITERS_BIT);
-  id |= LLL_WAITERS_BIT;
+  unsigned int val;
 
   while (1)
     {
       val = *iptr;
+      if (val == 0 && atomic_cas_bool (iptr, 0, id))
+        return (0);
+      else if (val != 0 && atomic_cas_bool (iptr, val, val | LLL_WAITERS))
+        break;
+    }
+
+  for (id |= LLL_WAITERS ; ; )
+    {
+      val = *iptr;
       if (val == 0 && atomic_cas_bool (iptr, val, id))
         return (0);
-      else if (!valid_pid (val & LLL_OWNER_MASK))
+      else if (val != 0 && !valid_pid (val & LLL_OWNER_MASK))
         {
           if (atomic_cas_bool (iptr, val, id))
             return (EOWNERDEAD);
@@ -274,7 +280,7 @@ void lll_robust_unlock (void *ptr, int flags)
   while (1)
     {
       unsigned int val = *(unsigned int *)ptr;
-      if (val & LLL_WAITERS_BIT)
+      if (val & LLL_WAITERS)
         {
           lll_set_wake (ptr, 0, flags);
           break;

@@ -91,7 +91,7 @@ int pthread_barrier_wait (pthread_barrier_t *barp)
       else if (cnt == barp->__total)
         {
           /* Clear count and bump sequence number. */
-          atomic_storeq (&barp->__seq_cnt.qv, barp->__seq_cnt.lo + 1);
+          atomic_storex (&barp->__seq_cnt.qv, barp->__seq_cnt.lo + 1);
 
           /* Tell everyone that we're done. */
           lll_wake (&barp->__seq_cnt.lo, pshared | GSYNC_BROADCAST);

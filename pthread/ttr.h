@@ -156,7 +156,7 @@ mig_external kern_return_t thread_terminate_release2
 	InP->Head.msgh_request_port = thread;
 	InP->Head.msgh_reply_port = MACH_PORT_NULL;
 	InP->Head.msgh_seqno = 0;
-	InP->Head.msgh_id = 4204;
+	InP->Head.msgh_id = 4207;
 
 	return mach_msg(&InP->Head, MACH_SEND_MSG|MACH_MSG_OPTION_NONE, 72, 0, MACH_PORT_NULL, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
 }

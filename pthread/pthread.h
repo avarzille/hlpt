@@ -28,7 +28,7 @@
 #undef _BITS_PTHREAD_H
 #define _BITS_PTHREAD_H   1
 
-#include <hurd/qval.h>
+#include <hurd/xint.h>
 #include <time.h>
 #include <sched.h>
 #include <sys/cdefs.h>
@@ -223,19 +223,19 @@ enum
 
 typedef struct
 {
-  unsigned int __lock;
-  unsigned int __owner_id;
-  unsigned int __cnt;
-  int __extra;
-  int __type;
-  int __flags;
-} pthread_mutex_t;
-
-typedef struct
-{
   int __flags;
   int __type;
 } pthread_mutexattr_t;
+
+typedef struct
+{
+  unsigned int __lock;
+  unsigned int __owner_id;
+  unsigned int __cnt;
+  int __shpid;
+  int __type;
+  int __flags;
+} pthread_mutex_t;
 
 /* Mutex types. */
 enum
@@ -380,15 +380,15 @@ extern int pthread_mutex_destroy (pthread_mutex_t *__mtxp)
 
 typedef struct
 {
-  union hurd_qval __sw;
-  pthread_mutex_t *__mutex;
   int __flags;
-} pthread_cond_t;
+} pthread_condattr_t;
 
 typedef struct
 {
+  union hurd_xint __seq_nw;
+  pthread_mutex_t *__mutex;
   int __flags;
-} pthread_condattr_t;
+} pthread_cond_t;
 
 /* Static condvar initializer. */
 #define PTHREAD_COND_INITIALIZER   \
@@ -460,15 +460,15 @@ extern int pthread_cond_destroy (pthread_cond_t *__condp)
 
 typedef struct
 {
-  union hurd_qval __pid_nw;
-  union hurd_qval __oid_nr;
   int __flags;
-} pthread_rwlock_t;
+} pthread_rwlockattr_t;
 
 typedef struct
 {
+  union hurd_xint __shpid_qwr;
+  union hurd_xint __oid_nrd;
   int __flags;
-} pthread_rwlockattr_t;
+} pthread_rwlock_t;
 
 /* Static read-write lock initializer. */
 #define PTHREAD_RWLOCK_INITIALIZER   { { 0 }, { 0 }, 0 }
@@ -534,7 +534,7 @@ typedef struct
 
 typedef struct
 {
-  union hurd_qval __seq_cnt;
+  union hurd_xint __seq_cnt;
   unsigned int __nrefs;
   unsigned int __total;
   int __flags;

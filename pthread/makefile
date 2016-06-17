@@ -4,7 +4,7 @@ CFLAGS = -Wall -Wextra -g -I$(CWD)/../ -D_GNU_SOURCE -fpic -msse2 -O2
 
 OBJS = attr.o barrier.o cancel.o cond.o create.o detach.o exit.o   \
        fork.o init.o join.o lowlevellock.o misc.o mutex.o np.o   \
-       once.o rwlock.o sem.o signal.o specific.o spinlock.o
+       once.o rwlock.o sem.o signal.o specific.o spinlock.o weak.o
 
 LIBS = -lgcc_s
 
@@ -18,15 +18,13 @@ all: $(OBJS)
 
 install:
 	mkdir -p $(PREFIX)/include/hurd
-	cp $(CWD)/../hurd/qval.h $(PREFIX)/include/hurd/
-	cp $(CWD)/../hurd/list.h $(PREFIX)/include/hurd/
+	cp $(CWD)/../hurd/xint.h $(PREFIX)/include/hurd/
 	cp $(CWD)/pthread.h $(PREFIX)/include/
 	cp $(CWD)/semaphore.h $(PREFIX)/include/
 	cp libhpt.so $(PREFIX)/lib/
 
 uninstall:
-	-rm $(PREFIX)/include/hurd/qval.h
-	-rm $(PREFIX)/include/hurd/list.h
+	-rm $(PREFIX)/include/hurd/xint.h
 	-rm $(PREFIX)/include/pthread.h
 	-rm $(PREFIX)/include/semaphore.h
 	-rm $(PREFIX)/lib/libhpt.so

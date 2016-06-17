@@ -139,27 +139,28 @@ struct pthread
 #define PTHREAD_INVALID_ID   (~0U)
 
 /* Thread flags. */
-#define PTHREAD_FLG_USR_STACK        (1U << 0)
-#define PTHREAD_FLG_EXITING          (1U << 1)
-#define PTHREAD_FLG_CANCELLED        (1U << 2)
-#define PTHREAD_FLG_CANCELLING       (1U << 3)
-#define PTHREAD_FLG_TERMINATED       (1U << 4)
-#define PTHREAD_FLG_CANCEL_ASYNC     (1U << 5)
-#define PTHREAD_FLG_CANCEL_DISABLE   (1U << 6)
-#define PTHREAD_FLG_MAIN_THREAD      (1U << 7)
+#define PT_FLG_USR_STACK        (1U << 0)
+#define PT_FLG_EXITING          (1U << 1)
+#define PT_FLG_CANCELLED        (1U << 2)
+#define PT_FLG_CANCELLING       (1U << 3)
+#define PT_FLG_TERMINATED       (1U << 4)
+#define PT_FLG_CANCEL_ASYNC     (1U << 5)
+#define PT_FLG_CANCEL_DISABLE   (1U << 6)
+#define PT_FLG_CANCEL_TRANS     (1U << 7)
+#define PT_FLG_MAIN_THREAD      (1U << 8)
 
 /* Test if FLG denotes any cancellation. */
 #define CANCELLED_ENABLED_P(flg)   \
-  (((flg) & (PTHREAD_FLG_CANCEL_DISABLE | PTHREAD_FLG_CANCELLED |   \
-             PTHREAD_FLG_EXITING | PTHREAD_FLG_TERMINATED)) ==   \
-     PTHREAD_FLG_CANCELLED)
+  (((flg) & (PT_FLG_CANCEL_DISABLE | PT_FLG_CANCELLED |   \
+             PT_FLG_EXITING | PT_FLG_TERMINATED)) ==   \
+     PT_FLG_CANCELLED)
 
 /* Test if FLG denotes an asynchronous cancellation. */
 #define CANCELLED_ENABLED_ASYNC_P(flg)   \
-  (((flg) & (PTHREAD_FLG_CANCEL_DISABLE | PTHREAD_FLG_CANCEL_ASYNC |   \
-             PTHREAD_FLG_CANCELLED | PTHREAD_FLG_EXITING |   \
-             PTHREAD_FLG_TERMINATED)) ==   \
-     (PTHREAD_FLG_CANCEL_ASYNC | PTHREAD_FLG_CANCELLED))
+  (((flg) & (PT_FLG_CANCEL_DISABLE | PT_FLG_CANCEL_ASYNC |   \
+             PT_FLG_CANCELLED | PT_FLG_EXITING |   \
+             PT_FLG_TERMINATED)) ==   \
+     (PT_FLG_CANCEL_ASYNC | PT_FLG_CANCELLED))
 
 /* A pthread is detached if the joiner pthread is itself. */
 #define DETACHED_P(pt)   ((pt)->joinpt == (pt))
@@ -202,5 +203,24 @@ extern void __pthread_cancelpoint_end (int);
 
 /* Useful forward declarations. */
 extern int getpid (void) __attribute__ ((const));
+
+/* Add to a 64-bit value carefully, so that wrapping at the sub-limb
+ * level isn't an issue. */
+#define atomic_addx_mem(ptr, lv, hv)   \
+  ({   \
+     union hurd_xint __tmp;   \
+     while (1)   \
+       {   \
+         __tmp.qv = atomic_loadx (ptr);   \
+         if (atomic_casx_bool ((ptr), __tmp.lo, __tmp.hi,   \
+             __tmp.lo + (lv), __tmp.hi + (hv)))   \
+           break;   \
+       }   \
+     \
+     __tmp.qv;   \
+   })
+
+#define atomic_addx_lo(ptr, val)   atomic_addx_mem (ptr, val, 0)
+#define atomic_addx_hi(ptr, val)   atomic_addx_mem (ptr, 0, val)
 
 #endif

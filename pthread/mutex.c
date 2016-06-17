@@ -125,7 +125,7 @@ int pthread_mutex_init (pthread_mutex_t *mtxp,
   mtxp->__flags = attrp->__flags;
   mtxp->__type = attrp->__type;
   mtxp->__owner_id = 0;
-  mtxp->__extra = 0;
+  mtxp->__shpid = 0;
   mtxp->__cnt = 0;
   mtxp->__lock = 0;
 
@@ -139,7 +139,7 @@ int pthread_mutex_init (pthread_mutex_t *mtxp,
 
 /* Lock routines. */
 
-/* Special ID used to signal an unrecoverable robust mutex. */
+/* Special ID used to signal an irecoverable robust mutex. */
 #define NOTRECOVERABLE_ID   (1U << 31)
 
 /* Common path for robust mutexes. Assumes the variable 'ret'
@@ -173,7 +173,7 @@ int pthread_mutex_init (pthread_mutex_t *mtxp,
           mtxp->__cnt = 1;   \
           if (ret == EOWNERDEAD)   \
             atomic_store (&mtxp->__lock,   \
-              mtxp->__lock | LLL_DEAD_OWNER_BIT);   \
+              mtxp->__lock | LLL_DEAD_OWNER);   \
         }   \
     }   \
   (void)0
@@ -183,7 +183,7 @@ int pthread_mutex_init (pthread_mutex_t *mtxp,
 #define mtx_owned_p(mtx, pt, flags)   \
   ((mtx)->__owner_id == (pt)->id &&   \
     (((flags) & GSYNC_SHARED) == 0 ||   \
-      (mtx)->__extra == getpid ()))
+      (mtx)->__shpid == getpid ()))
 
 /* Record a thread as the owner of the mutex. */
 #define mtx_set_owner(mtx, pt, flags)   \
@@ -191,7 +191,7 @@ int pthread_mutex_init (pthread_mutex_t *mtxp,
     ({   \
        (mtx)->__owner_id = (pt)->id;   \
        if ((flags) & GSYNC_SHARED)   \
-         (mtx)->__extra = getpid ();   \
+         (mtx)->__shpid = getpid ();   \
      })
 
 /* Mutex type, including robustness. */
@@ -366,7 +366,7 @@ int pthread_mutex_unlock (pthread_mutex_t *mtxp)
           ret = EPERM;
         else if (--mtxp->__cnt == 0)
           {
-            mtxp->__owner_id = mtxp->__extra = 0;
+            mtxp->__owner_id = mtxp->__shpid = 0;
             lll_unlock (&mtxp->__lock, flags);
           }
 
@@ -377,7 +377,7 @@ int pthread_mutex_unlock (pthread_mutex_t *mtxp)
           ret = EPERM;
         else
           {
-            mtxp->__owner_id = mtxp->__extra = 0;
+            mtxp->__owner_id = mtxp->__shpid = 0;
             lll_unlock (&mtxp->__lock, flags);
           }
 
@@ -395,7 +395,7 @@ int pthread_mutex_unlock (pthread_mutex_t *mtxp)
           {
             /* Release the lock. If it's in an inconsistent
              * state, mark it as not recoverable. */
-            mtxp->__owner_id = (mtxp->__lock & LLL_DEAD_OWNER_BIT) ?
+            mtxp->__owner_id = (mtxp->__lock & LLL_DEAD_OWNER) ?
               NOTRECOVERABLE_ID : 0;
             lll_robust_unlock (&mtxp->__lock, flags);
           }
@@ -416,8 +416,8 @@ int pthread_mutex_consistent (pthread_mutex_t *mtxp)
   unsigned int val = mtxp->__lock;
 
   if ((mtxp->__flags & PTHREAD_MUTEX_ROBUST) != 0 &&
-      (val & LLL_DEAD_OWNER_BIT) != 0 &&
-      atomic_cas_bool (&mtxp->__lock, val, getpid () | LLL_WAITERS_BIT))
+      (val & LLL_DEAD_OWNER) != 0 &&
+      atomic_cas_bool (&mtxp->__lock, val, getpid () | LLL_WAITERS))
     {
       /* The mutex is now ours, and it's consistent. */
       mtxp->__owner_id = PTHREAD_SELF->id;
@@ -435,6 +435,8 @@ int pthread_mutex_transfer_np (pthread_mutex_t *mtxp, pthread_t th)
 
   if (INVALID_P (pt))
     return (ESRCH);
+  else if (pt == self)
+    return (0);
 
   int ret = 0;
   int flags = mtxp->__flags & GSYNC_SHARED;

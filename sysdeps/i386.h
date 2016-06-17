@@ -88,6 +88,13 @@ typedef struct
        __tp->thrdesc = (pt);   \
      })
 
+/* Called when we're done with the TCB. */
+#define CLEAR_TCB(tcbp)   \
+  ({   \
+     tcbhead_t *__tp = (tcbhead_t *)(tcbp);   \
+     __tp->reply_port = MACH_PORT_NULL;   \
+   })
+
 #undef atomic_cas_bool
 
 /* On x86, we can get away with using a weak CAS. */
@@ -105,7 +112,7 @@ typedef struct
   /* When SSE is enabled, we can use one of its registers
    * to move around 64-bit values. */
 
-#  define atomic_loadq(ptr)   \
+#  define atomic_loadx(ptr)   \
     ({   \
        typeof (*ptr) __R;   \
        __asm__ __volatile__   \
@@ -116,7 +123,7 @@ typedef struct
        __R;   \
      })
 
-#  define atomic_storeq(dst, src)   \
+#  define atomic_storex(dst, src)   \
     ({   \
        __asm__ __volatile__   \
          (   \
@@ -135,14 +142,14 @@ typedef struct
   /* XXX: What should we do with the floating point status word?
    * Should we save it and restore it on each call? */
 
-#  define atomic_loadq(ptr)   \
+#  define atomic_loadx(ptr)   \
     ({   \
        union { double __d; unsigned long long __q; }   \
          __U = { *(const double *)(ptr) };   \
        __U.__q;   \
      })
 
-#  define atomic_storeq(dst, src)   \
+#  define atomic_storex(dst, src)   \
     ({   \
        union { unsigned long long __q; double __d; } __U = { (src) };   \
        *(double *)(dst) = __U.__d;   \
@@ -166,7 +173,7 @@ typedef struct
 
 #  ifdef __OPTIMIZE__
 
-#    define atomic_casq_bool(ptr, elo, ehi, nlo, nhi)   \
+#    define atomic_casx_bool(ptr, elo, ehi, nlo, nhi)   \
       ({   \
          long __S, __V = (nlo);   \
          char __R;   \
@@ -191,7 +198,7 @@ typedef struct
     /* When using -O0, we have to preserve %edi, otherwise it
      * fails while finding a register in class 'GENERAL_REGS'. */
 
-#    define atomic_casq_bool(ptr, elo, ehi, nlo, nhi)   \
+#    define atomic_casx_bool(ptr, elo, ehi, nlo, nhi)   \
       ({   \
          long __D, __S, __V = (nlo);   \
          char __R;   \
@@ -220,7 +227,7 @@ typedef struct
   /* In non-PIC mode, we can use %ebx to load the
    * lower word in NLO. */
 
-#  define atomic_casq_bool(ptr, elo, ehi, nlo, nhi)   \
+#  define atomic_casx_bool(ptr, elo, ehi, nlo, nhi)   \
     ({   \
        char __R;   \
        __asm__ __volatile__   \
@@ -263,8 +270,7 @@ typedef struct
  * and thread-specific register. */
 
 static inline int
-__pthread_set_ctx (mach_port_t ktid, int set_ip,
-  void *ip, int set_sp, void *sp, int set_tp, void *tp)
+__pthread_set_ctx (mach_port_t ktid, void *ip, void *sp, void *tp)
 {
   struct i386_thread_state state;
   mach_msg_type_number_t cnt = i386_THREAD_STATE_COUNT;
@@ -274,26 +280,22 @@ __pthread_set_ctx (mach_port_t ktid, int set_ip,
   if (ret != 0)
     return (ret);
 
-  if (set_ip)
-    state.eip = (unsigned long)ip;
-  if (set_sp)
-    state.uesp = (unsigned long)sp;
-  if (set_tp)
-    {
-      HURD_TLS_DESC_DECL (desc, tp);
-      int sel;
+  state.eip = (unsigned long)ip;
+  state.uesp = (unsigned long)sp;
 
-      __asm__ ("mov %%gs, %w0" : "=q" (sel) : "0" (0));
-      if (sel & 4)
-        ret = __i386_set_ldt (ktid, sel, &desc, 1);
-      else
-        ret = __i386_set_gdt (ktid, &sel, desc);
+  HURD_TLS_DESC_DECL (desc, tp);
+  int sel;
 
-      if (ret)
-        return (ret);
+  __asm__ ("mov %%gs, %w0" : "=q" (sel) : "0" (0));
+  if (sel & 4)
+    ret = __i386_set_ldt (ktid, sel, &desc, 1);
+  else
+    ret = __i386_set_gdt (ktid, &sel, desc);
 
-      state.gs = sel;
-    }
+  if (ret)
+    return (ret);
+
+  state.gs = sel;
 
   return (thread_set_state (ktid, i386_REGS_SEGS_STATE,
     (thread_state_t)&state, i386_THREAD_STATE_COUNT));
@@ -312,9 +314,26 @@ __pthread_set_machine_state (struct pthread *pt,
   *--up = (unsigned long)pt;   /* Function argument. */
   *--up = 0;   /* (Fake) return address. */
 
-  return (__pthread_set_ctx (__pthread_kport (pt),
-    1, (void *)fct, 1, up, 1, pt->tcb));
+  return (__pthread_set_ctx (__pthread_kport (pt), (void *)fct, up, pt->tcb));
 }
+
+
+/* Definitions for asynchronous cancellation. */
+
+typedef struct i386_thread_state machine_state_t;
+
+#define machine_state_get(ktid, statep)   \
+  ({   \
+     mach_msg_type_number_t __cnt = i386_THREAD_STATE_COUNT;   \
+     thread_get_state ((ktid), i386_REGS_SEGS_STATE,   \
+       (thread_state_t)(statep), &__cnt);   \
+   })
+
+#define machine_state_set(ktid, statep)   \
+  thread_set_state ((ktid), i386_REGS_SEGS_STATE,   \
+    (thread_state_t)(statep), i386_THREAD_STATE_COUNT)
+
+#define machine_state_pc(state)       ((state).eip)
 
 #endif   /* __need_pthread_machine */
 
